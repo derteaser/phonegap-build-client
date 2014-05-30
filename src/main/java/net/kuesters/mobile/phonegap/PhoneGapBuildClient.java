@@ -7,6 +7,8 @@ import java.security.NoSuchAlgorithmException;
 import java.security.UnrecoverableKeyException;
 import java.util.List;
 
+import javax.net.ssl.SSLSocketFactory;
+
 import net.kuesters.mobile.MobileApp;
 import net.kuesters.mobile.phonegap.api.CreateOrUpdateAppRequest;
 import net.kuesters.mobile.phonegap.api.CreateOrUpdateAppResponse;
@@ -27,17 +29,14 @@ import org.apache.http.client.methods.HttpDelete;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.methods.HttpPut;
-import org.apache.http.conn.scheme.Scheme;
-import org.apache.http.conn.scheme.SchemeRegistry;
-import org.apache.http.conn.ssl.SSLSocketFactory;
-import org.apache.http.conn.ssl.TrustSelfSignedStrategy;
+import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
+import org.apache.http.entity.ContentType;
 import org.apache.http.entity.mime.HttpMultipartMode;
-import org.apache.http.entity.mime.MultipartEntity;
+import org.apache.http.entity.mime.MultipartEntityBuilder;
 import org.apache.http.entity.mime.content.ByteArrayBody;
 import org.apache.http.entity.mime.content.StringBody;
-import org.apache.http.impl.client.AbstractHttpClient;
-import org.apache.http.impl.client.DefaultHttpClient;
-import org.apache.http.impl.conn.BasicClientConnectionManager;
+import org.apache.http.impl.client.BasicCredentialsProvider;
+import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.util.EntityUtils;
 import org.json.simple.JSONObject;
 import org.json.simple.JSONValue;
@@ -91,7 +90,7 @@ public class PhoneGapBuildClient {
 	 */
 	public List<App> getApps() {
 		try {
-			HttpClient httpClient = getHttpClient();
+			HttpClient httpClient = getHttpClientBuilder().build();
 			HttpGet httpGet = new HttpGet(URL_APPS + "?auth_token=" + this.token);
 			HttpResponse response = httpClient.execute(httpGet);
 			HttpEntity responseEntity = response.getEntity();
@@ -122,7 +121,7 @@ public class PhoneGapBuildClient {
 	 */
 	public ReadAppResponse getApp(long id) {
 		try {
-			HttpClient httpClient = getHttpClient();
+			HttpClient httpClient = getHttpClientBuilder().build();
 			HttpGet httpGet = new HttpGet(URL_APPS + "/" + id + "?auth_token=" + this.token);
 			HttpResponse response = httpClient.execute(httpGet);
 
@@ -171,12 +170,15 @@ public class PhoneGapBuildClient {
 	 */
 	public CreateOrUpdateAppResponse createOrUpdateApp(long id, CreateOrUpdateAppRequest request, byte[] zipData, String zipFilename) {
 		try {
-			MultipartEntity requestEntity = new MultipartEntity(HttpMultipartMode.BROWSER_COMPATIBLE);
-			requestEntity.addPart("data", new StringBody(request.getData().toJSONString()));
-			if (zipData != null && StringUtils.isNotBlank(zipFilename))
-				requestEntity.addPart("file", new ByteArrayBody(zipData, zipFilename));
+			MultipartEntityBuilder builder = MultipartEntityBuilder.create().setMode(HttpMultipartMode.BROWSER_COMPATIBLE)
+					.addPart("data", new StringBody(request.getData().toJSONString(), ContentType.APPLICATION_JSON));
+			if (zipData != null && StringUtils.isNotBlank(zipFilename)) {
+				builder = builder.addPart("file", new ByteArrayBody(zipData, zipFilename));
+			}
 
-			HttpClient httpClient = getHttpClient();
+			HttpEntity requestEntity = builder.build();
+
+			HttpClient httpClient = getHttpClientBuilder().build();
 			HttpResponse response;
 
 			if (id > 0) {
@@ -242,7 +244,7 @@ public class PhoneGapBuildClient {
 	 */
 	public boolean deleteApp(long id) {
 		try {
-			HttpClient httpClient = getHttpClient();
+			HttpClient httpClient = getHttpClientBuilder().build();
 			HttpDelete httpDelete = new HttpDelete(URL_APPS + "/" + id + "?auth_token=" + this.token);
 			HttpResponse response = httpClient.execute(httpDelete);
 
@@ -298,10 +300,12 @@ public class PhoneGapBuildClient {
 	 */
 	private String getToken(String username, String password) throws KeyManagementException, UnrecoverableKeyException, NoSuchAlgorithmException, KeyStoreException, ClientProtocolException,
 			IOException, org.apache.http.ParseException, ParseException {
-		AbstractHttpClient httpClient = getHttpClient();
-		UsernamePasswordCredentials creds = new UsernamePasswordCredentials(username, password);
-		httpClient.getCredentialsProvider().setCredentials(new AuthScope(AuthScope.ANY_HOST, AuthScope.ANY_PORT), creds);
+		HttpClientBuilder clientBuilder = getHttpClientBuilder();
+		BasicCredentialsProvider credentialsProvider = new BasicCredentialsProvider();
+		credentialsProvider.setCredentials(new AuthScope(AuthScope.ANY_HOST, AuthScope.ANY_PORT), new UsernamePasswordCredentials(username, password));
+		clientBuilder.setDefaultCredentialsProvider(credentialsProvider);
 
+		HttpClient httpClient = clientBuilder.build();
 		HttpPost httpPost = new HttpPost(URL_TOKEN);
 		HttpResponse response = httpClient.execute(httpPost);
 		HttpEntity responseEntity = response.getEntity();
@@ -335,13 +339,9 @@ public class PhoneGapBuildClient {
 	 * @throws KeyStoreException
 	 *             the key store exception
 	 */
-	private AbstractHttpClient getHttpClient() throws KeyManagementException, UnrecoverableKeyException, NoSuchAlgorithmException, KeyStoreException {
-		SSLSocketFactory sslFactory = new SSLSocketFactory(new TrustSelfSignedStrategy(), SSLSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
-		SchemeRegistry schemeRegistry = new SchemeRegistry();
-		schemeRegistry.register(new Scheme("https", 443, sslFactory));
-		BasicClientConnectionManager cm = new BasicClientConnectionManager(schemeRegistry);
-
-		return new DefaultHttpClient(cm);
+	private HttpClientBuilder getHttpClientBuilder() throws KeyManagementException, UnrecoverableKeyException, NoSuchAlgorithmException, KeyStoreException {
+		SSLConnectionSocketFactory sslFactory = new SSLConnectionSocketFactory((SSLSocketFactory) SSLSocketFactory.getDefault(), SSLConnectionSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
+		return HttpClientBuilder.create().setSSLSocketFactory(sslFactory);
 	}
 
 	/**
